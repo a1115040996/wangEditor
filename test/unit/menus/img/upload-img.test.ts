@@ -109,7 +109,7 @@ describe('upload img', () => {
             false,
             `<img src="${imgUrl}" style="max-width:100%;"/>`
         )
-        expect(callback).toBeCalledWith(imgUrl)
+        expect(callback).toBeCalledWith(imgUrl, undefined, undefined)
     })
 
     test('调用 insertImg 可以网编辑器里插入图片，插入图片加载失败可以通过customAlert配置错误提示', done => {
