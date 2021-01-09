@@ -9,6 +9,7 @@ import deleteToKeepP from './del-to-keep-p'
 import tabToSpan from './tab-to-space'
 import pasteTextHtml from './paste-text-html'
 import imgClickActive from './img-click-active'
+import handleCodeBlockJump from './handle-codeblock-jump'
 
 /**
  * 初始化 text 事件钩子函数
@@ -32,6 +33,9 @@ function initTextHooks(text: Text): void {
 
     // img click active
     imgClickActive(editor, eventHooks.imgClickEvents)
+
+    // 处理代码块跳出问题
+    handleCodeBlockJump(editor, eventHooks.deleteUpEvents, eventHooks.enterDownEvents)
 }
 
 export default initTextHooks
