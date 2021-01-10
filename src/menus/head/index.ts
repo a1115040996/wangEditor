@@ -4,11 +4,12 @@
  */
 
 import DropListMenu from '../menu-constructors/DropListMenu'
-import $ from '../../utils/dom-core'
+import $, { DomElement } from '../../utils/dom-core'
 import Editor from '../../editor/index'
 import { MenuActive } from '../menu-constructors/Menu'
 import { getRandomCode } from '../../utils/util'
 import { TCatalog } from '../../config/events'
+import { UA } from '../../utils/util'
 
 class Head extends DropListMenu implements MenuActive {
     oldCatalogs: TCatalog[] | undefined
@@ -55,13 +56,13 @@ class Head extends DropListMenu implements MenuActive {
         const editor = this.editor
         const $selectionElem = editor.selection.getSelectionContainerElem()
         if ($selectionElem && editor.$textElem.equal($selectionElem)) {
-            // 不能选中多行来设置标题，否则会出现问题
+            // 解决选中多行设置标题不符合预期的问题
             // 例如选中的是 <p>xxx</p><p>yyy</p> 来设置标题，设置之后会成为 <h1>xxx<br>yyy</h1> 不符合预期
+            this.setMultilineHead(value)
             return
+        } else {
+            editor.cmd.do('formatBlock', value)
         }
-
-        editor.cmd.do('formatBlock', value)
-
         // 标题设置成功且不是<p>正文标签就配置大纲id
         value !== '<p>' && this.addUidForSelectionElem()
     }
@@ -118,7 +119,110 @@ class Head extends DropListMenu implements MenuActive {
             onCatalogChange && onCatalogChange(catalogs)
         }
     }
-
+    /**
+     * 设置选中的多行标题
+     * @param value  需要执行的命令值
+     */
+    private setMultilineHead(value: string) {
+        let isIE = UA.isIE()
+        if (isIE) {
+            // ie下禁止多行操作 避免多行造成除第一行外的段落内容都被删除
+            return
+        }
+        const editor = this.editor
+        const $selection = editor.selection
+        // 初始选区的父节点
+        const containerElem = $selection.getSelectionContainerElem()?.elems[0]!
+        // 白名单：用户选区里如果有该元素则不进行转换
+        const _WHITE_LIST = ['IMG', 'VIDEO', 'TABLE', 'UL', 'OL', 'PRE', 'HR', 'BLOCKQUOTE']
+        // 获取选中的首、尾元素
+        const startElem = $($selection.getSelectionStartElem())
+        let endElem = $($selection.getSelectionEndElem())
+        // 判断用户选中元素是否为最后一个空元素，如果是将endElem指向上一个元素
+        if (
+            endElem.elems[0].outerHTML === $('<p><br></p>').elems[0].outerHTML &&
+            !endElem.elems[0].nextSibling
+        ) {
+            endElem = endElem.prev()!
+        }
+        // 存放选中的所有元素
+        const cacheDomList: DomElement[] = []
+        cacheDomList.push(startElem.getNodeTop(editor))
+        // 选中首尾元素在父级下的坐标
+        const indexList: number[] = []
+        // 选区共同祖先元素的所有子节点
+        const childList = $selection.getRange()?.commonAncestorContainer.childNodes
+        // 找到选区的首尾元素的下标，方便最后恢复选区
+        childList?.forEach((item, index) => {
+            if (item === cacheDomList[0].getNode()) {
+                indexList.push(index)
+            }
+            if (item === endElem.getNodeTop(editor).getNode()) {
+                indexList.push(index)
+            }
+        })
+        // 找到首尾元素中间所包含的所有dom
+        let i = 0
+        // 数组中的当前元素不等于选区最后一个节点时循环寻找中间节点
+        while (cacheDomList[i].getNode() !== endElem.getNodeTop(editor).getNode()) {
+            // 严谨性判断，是否元素为空
+            if (!cacheDomList[i].elems[0]) return
+            let d = $(cacheDomList[i].next().getNode())
+            cacheDomList.push(d)
+            i++
+        }
+        // 将选区内的所有子节点进行遍历生成对应的标签
+        cacheDomList?.forEach((_node, index) => {
+            // 判断元素是否含有白名单内的标签元素
+            if (!this.hasTag(_node, _WHITE_LIST)) {
+                const $h = $(value)
+                // 设置标签内容
+                $h.html(`${_node.html()}`)
+                // 插入生成的新标签
+                _node.parent().getNode().insertBefore($h.getNode(), _node.getNode())
+                // 移除原有的标签
+                _node.remove()
+            }
+        })
+        // 重新设置选区起始位置，保留拖蓝区域
+        this.setRange(containerElem.children[indexList[0]], containerElem.children[indexList[1]])
+    }
+    /**
+     * 重新设置选区
+     * @param startDom 选区开始的元素
+     * @param endDom 选区结束的元素
+     */
+    public setRange(startDom: Node, endDom: Node): void {
+        const editor = this.editor
+        let selection = window.getSelection ? window.getSelection() : document.getSelection()
+        //清除所有的选区
+        selection?.removeAllRanges()
+        const range = document.createRange()
+        range.setStart(startDom, 0)
+        // 设置多行标签之后，第二个参数会被h标签内的b、font标签等影响range范围的选取
+        range.setEnd(endDom, endDom.childNodes.length || 1)
+        selection?.addRange(range)
+        //保存设置好的选区
+        editor.selection.saveRange()
+        //清除所有的选区
+        selection?.removeAllRanges()
+        //恢复选区
+        editor.selection.restoreSelection()
+    }
+    /**
+     * 是否含有某元素
+     * @param elem 需要检查的元素
+     * @param whiteList 白名单
+     */
+    private hasTag(elem: DomElement, whiteList: string[]): boolean {
+        if (!elem) return false
+        if (whiteList.includes(elem?.getNodeName())) return true
+        let _flag = false
+        elem.children()?.forEach(child => {
+            _flag = this.hasTag($(child), whiteList)
+        })
+        return _flag
+    }
     /**
      * 尝试改变菜单激活（高亮）状态
      */
